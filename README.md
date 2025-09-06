@@ -1,12 +1,12 @@
 # BlueTick 🫀
 
-**Sync your Pixel Watch heart rate to Cadence (getcadence.com) in real-time**
+**Sync your Pixel Watch heart rate to [Cadence](https://getcadence.app) in real-time**
 
 BlueTick is a Wear OS app that broadcasts your Pixel Watch's heart rate data via Bluetooth Low Energy (BLE), allowing you to sync it with the Cadence cycling app for real-time heart rate monitoring during your workouts.
 
 ## 🎯 Why BlueTick?
 
-If you're a cyclist using [Cadence](https://getcadence.com) for training, you know how important real-time heart rate data is for optimizing your performance. However, getting your Pixel Watch's heart rate data into Cadence can be challenging due to compatibility limitations.
+If you're a cyclist using [Cadence](https://getcadence.app) for training, you know how important real-time heart rate data is for optimizing your performance. However, getting your Pixel Watch's heart rate data into Cadence can be challenging due to compatibility limitations.
 
 **BlueTick solves this by:**
 - 📡 Broadcasting your Pixel Watch heart rate via BLE
