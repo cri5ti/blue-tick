@@ -24,6 +24,8 @@ import androidx.annotation.RequiresPermission
 import androidx.core.app.NotificationCompat
 import androidx.core.content.ContextCompat
 import androidx.health.services.client.HealthServices
+import androidx.wear.ongoing.OngoingActivity
+import androidx.wear.ongoing.Status
 import androidx.health.services.client.MeasureCallback
 import androidx.health.services.client.MeasureClient
 import androidx.health.services.client.data.Availability
@@ -81,6 +83,9 @@ class HrBleService : Service() {
     private var hsRegistered = false
     private var btReceiverRegistered = false
 
+    // ---------- Ongoing Activity ----------
+    private var ongoingActivity: OngoingActivity? = null
+
     private val heartRateCallback = object : MeasureCallback {
         override fun onAvailabilityChanged(dataType: DeltaDataType<*, *>, availability: Availability) {
             Log.d(TAG, "HS availability: $dataType -> $availability")
@@ -112,20 +117,12 @@ class HrBleService : Service() {
 
         if (!ensureBleReadyOrStop()) return START_NOT_STICKY
 
-        val notification = buildNotification()
-        Log.d(TAG, "Starting foreground service with notification")
-        startForeground(1, notification)
+        // Get the notification from the OngoingActivity setup
+        val foregroundNotification = startOngoingActivity()
         
-        // Additional debugging
-        val nm = getSystemService(NotificationManager::class.java)
-        Log.d(TAG, "Notification manager active notifications: ${nm.activeNotifications.size}")
-        Log.d(TAG, "Are notifications enabled: ${nm.areNotificationsEnabled()}")
-        
-        // Check if notifications are enabled
-        if (!nm.areNotificationsEnabled()) {
-            Log.w(TAG, "Notifications are disabled for this app!")
-            Toast.makeText(this, "Notifications disabled - service will run without status icon", Toast.LENGTH_LONG).show()
-        }
+        // Use that notification to start the foreground service
+        startForeground(101, foregroundNotification)
+        Log.d(TAG, "Service started as foreground with OngoingActivity")
 
         // Build/refresh GATT each (re)start
         startGatt()
@@ -176,48 +173,91 @@ class HrBleService : Service() {
             unregisterReceiver(btReceiver)
             btReceiverRegistered = false
         }
+        
+        // OngoingActivity is automatically managed by the system
+        // No need to explicitly cancel it
+        ongoingActivity = null
+        
         super.onDestroy()
     }
 
     override fun onBind(intent: Intent?) = null
 
-    // ---------- Notification ----------
-    private fun buildNotification(): Notification {
+    // ---------- Ongoing Activity ----------
+    private fun startOngoingActivity(): Notification {
+        Log.d(TAG, "Starting OngoingActivity setup...")
+        
         val nm = getSystemService(NotificationManager::class.java)
         val channel = NotificationChannel(
             CHANNEL_ID, 
             "HR Broadcast", 
-            NotificationManager.IMPORTANCE_DEFAULT // Try DEFAULT instead of LOW
+            NotificationManager.IMPORTANCE_HIGH
         ).apply {
             description = "Heart rate broadcasting service"
-            setShowBadge(true)
+            setShowBadge(false)
             enableLights(false)
             enableVibration(false)
-            setSound(null, null) // No sound
+            setSound(null, null)
         }
         nm.createNotificationChannel(channel)
+        Log.d(TAG, "Notification channel $CHANNEL_ID created with importance HIGH")
 
-        val stopIntent = Intent(this, HrBleService::class.java).apply { action = ACTION_STOP }
-        val stopPi = PendingIntent.getService(
-            this, 0, stopIntent, PendingIntent.FLAG_IMMUTABLE
+        // Create touch intent to open MainActivity
+        val touchIntent = Intent(this, MainActivity::class.java).apply {
+            flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
+        }
+        val touchPi = PendingIntent.getActivity(
+            this, 0, touchIntent, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
+        Log.d(TAG, "Touch intent created for MainActivity")
 
-        val notification = NotificationCompat.Builder(this, CHANNEL_ID)
-            .setContentTitle("Broadcasting Heart Rate")
-            .setContentText("Visible to BLE apps (Heart Rate Service)")
-            .setSmallIcon(R.drawable.ic_notification_heart) // Use the new notification-specific icon
-            .setColor(ContextCompat.getColor(this, android.R.color.white)) // Set notification color
-            .addAction(0, "Stop", stopPi)
-            .setOngoing(true)
-            .setAutoCancel(false)
-            .setPriority(NotificationCompat.PRIORITY_DEFAULT) // Match channel importance
+        // Create the *base* notification builder
+        val notificationCompatBuilder = NotificationCompat.Builder(this, CHANNEL_ID)
+            .setContentTitle("Heart Rate Broadcast")
+            .setContentText("BLE service running")
+            .setSmallIcon(R.drawable.ic_notification_heart)
+            .setPriority(NotificationCompat.PRIORITY_HIGH)
             .setCategory(NotificationCompat.CATEGORY_SERVICE)
-            .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
-            .setShowWhen(false) // Don't show timestamp
+            .setShowWhen(false)
+            .setOngoing(true) // Required for ongoing activity
+        Log.d(TAG, "NotificationCompat.Builder created with small icon: ${R.drawable.ic_notification_heart}")
+
+        // Create OngoingActivity using the builder
+        Log.d(TAG, "Creating OngoingActivity.Builder...")
+        ongoingActivity = OngoingActivity.Builder(
+            applicationContext, 101, notificationCompatBuilder
+        )
+            .setStaticIcon(R.drawable.ic_notification_heart)
+            .setTouchIntent(touchPi)
+            .setStatus(Status.Builder().addTemplate("Heart Rate Broadcasting").build())
             .build()
-            
-        Log.d(TAG, "Notification created with icon: ${R.drawable.ic_notification_heart}")
-        return notification
+        Log.d(TAG, "OngoingActivity.Builder created successfully")
+
+        // Apply the OngoingActivity
+        Log.d(TAG, "Attempting to apply OngoingActivity...")
+        ongoingActivity?.apply(applicationContext)
+        Log.d(TAG, "OngoingActivity apply completed. Null? ${ongoingActivity == null}")
+        
+        // Verify notification manager state
+        Log.d(TAG, "Notification manager active notifications: ${nm.activeNotifications.size}")
+        Log.d(TAG, "Are notifications enabled: ${nm.areNotificationsEnabled()}")
+        
+        Log.d(TAG, "OngoingActivity setup completed.")
+        
+        // Return the notification built from the same builder used by OngoingActivity
+        // This ensures synchronization between OngoingActivity and startForeground
+        return notificationCompatBuilder.build()
+    }
+
+    private fun updateOngoingActivityStatus(bpm: Int) {
+        Log.d(TAG, "Updating OngoingActivity status to: HR: $bpm BPM")
+        ongoingActivity?.update(
+            applicationContext,
+            Status.Builder()
+                .addTemplate("HR: $bpm BPM")
+                .build()
+        )
+        Log.d(TAG, "OngoingActivity status update completed")
     }
 
     // ---------- BLE GATT ----------
@@ -415,8 +455,11 @@ class HrBleService : Service() {
         
         Log.d(TAG, "Pushing HR: $validBpm BPM to ${subscribedDevices.size} devices")
         subscribedDevices.forEach { dev ->
-            gattServer?.notifyCharacteristicChanged(dev, chr, /*confirm*/ false)
+            gattServer?.notifyCharacteristicChanged(dev, chr, false, lastHrPayload)
         }
+        
+        // Update OngoingActivity status with current HR
+        updateOngoingActivityStatus(validBpm)
     }
 
     // ---------- Health Services start/stop ----------
