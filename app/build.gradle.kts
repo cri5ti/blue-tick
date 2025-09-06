@@ -48,6 +48,11 @@ dependencies {
     // Compose BOM to align versions
     implementation(platform("androidx.compose:compose-bom:2024.08.00"))
 
+    implementation("androidx.activity:activity-compose:1.9.2")
+    implementation("androidx.wear.compose:compose-material:1.3.1")
+    implementation("androidx.wear.compose:compose-foundation:1.3.1")
+
+
     // Core libraries
     implementation("androidx.compose.ui:ui")
     implementation("androidx.compose.ui:ui-tooling-preview")

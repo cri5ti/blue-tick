@@ -8,9 +8,12 @@
     <uses-permission android:name="android.permission.BODY_SENSORS" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_HEALTH" />
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
 
     <uses-permission android:name="android.permission.BLUETOOTH_ADVERTISE" />
     <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />
+    <uses-permission android:name="android.permission.BLUETOOTH_SCAN" />
 
     <application
         android:allowBackup="true"
@@ -37,6 +40,11 @@
             android:name=".HrBleService"
             android:exported="false"
             android:foregroundServiceType="health" />
+
+        <!-- Notification channel for foreground service -->
+        <meta-data
+            android:name="android.app.default_notification_channel_id"
+            android:value="hr_ble" />
 
     </application>
 
