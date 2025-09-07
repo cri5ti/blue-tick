@@ -16,45 +16,32 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
-import androidx.compose.ui.Alignment
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import kotlinx.coroutines.delay
-import kotlinx.coroutines.launch
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
-import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.verticalScroll
 import androidx.wear.compose.material.Chip
 import androidx.wear.compose.material.ChipDefaults
-import androidx.wear.compose.material.Picker
-import androidx.wear.compose.material.PickerState
 import androidx.wear.compose.material.Scaffold
 import androidx.wear.compose.material.Text
 import androidx.wear.compose.material.TimeText
 import androidx.wear.compose.material.Vignette
 import androidx.wear.compose.material.VignettePosition
-import androidx.wear.compose.material.rememberPickerState
 
 class MainActivity : ComponentActivity() {
 
     private val started = mutableStateOf(false)
-    private val remainingTimeSeconds = mutableStateOf(0)
-    private val timeoutMinutes = mutableStateOf(60) // default = 1 h
-
-    private var pendingTimeoutMinutes: Int = 8*60 // default = 4 h
 
     private val runtimePerms = arrayOf(
         Manifest.permission.BODY_SENSORS,
@@ -76,11 +63,11 @@ class MainActivity : ComponentActivity() {
     ) {
         if (hasAllRuntimePerms()) {
             if (areNotificationsEnabled()) {
-                startHrServiceOnce(pendingTimeoutMinutes)
+                startHrServiceOnce()
             } else {
                 // Notifications disabled, but we can still start the service
                 Log.w("MainActivity", "Notifications disabled - starting service anyway")
-                startHrServiceOnce(pendingTimeoutMinutes)
+                startHrServiceOnce()
                 // Show a toast to inform user about notification settings
                 android.widget.Toast.makeText(this, "Service started without notification icon. Enable notifications in Settings for status icon.", android.widget.Toast.LENGTH_LONG).show()
             }
@@ -93,30 +80,13 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         // Check if service is actually running instead of relying on saved state
         started.value = isServiceRunning()
-        
-        // Restore timer state
-        timeoutMinutes.value = savedInstanceState?.getInt("timeout_minutes") ?: 60
-        remainingTimeSeconds.value = savedInstanceState?.getInt("remaining_seconds") ?: 0
-        
-        // If service is running but we don't have timer state, estimate remaining time
-        if (started.value && remainingTimeSeconds.value == 0 && timeoutMinutes.value > 0) {
-            // Assume service just started, set full timeout
-            remainingTimeSeconds.value = timeoutMinutes.value * 60
-        }
 
         setContent {
             WearScreen(
                 started = started.value,
-                defaultTimeout = pendingTimeoutMinutes,
-                timeoutMinutes = timeoutMinutes.value,
-                remainingTimeSeconds = remainingTimeSeconds.value,
-                onTimeoutChanged = { 
-                    pendingTimeoutMinutes = it
-                    timeoutMinutes.value = it
-                },
                 onStart = {
                     if (hasAllRequiredPerms()) {
-                        startHrServiceOnce(pendingTimeoutMinutes)
+                        startHrServiceOnce()
                     } else {
                         // ask for permissions first; on grant we'll check notifications
                         permsLauncher.launch(runtimePerms)
@@ -130,10 +100,6 @@ class MainActivity : ComponentActivity() {
                         }
                     )
                     started.value = false
-                    remainingTimeSeconds.value = 0
-                },
-                onTimerUpdate = { newSeconds ->
-                    remainingTimeSeconds.value = newSeconds
                 }
             )
         }
@@ -141,25 +107,17 @@ class MainActivity : ComponentActivity() {
 
     override fun onSaveInstanceState(outState: Bundle) {
         outState.putBoolean("started", started.value)
-        outState.putInt("timeout_minutes", timeoutMinutes.value)
-        outState.putInt("remaining_seconds", remainingTimeSeconds.value)
         super.onSaveInstanceState(outState)
     }
 
-    private fun startHrServiceOnce(selectedTimeoutMinutes: Int) {
+    private fun startHrServiceOnce() {
         if (started.value) return
-        Log.d("MainActivity", "Starting HrBleService timeout=${selectedTimeoutMinutes}min")
+        Log.d("MainActivity", "Starting HrBleService indefinitely")
         ContextCompat.startForegroundService(
             this,
-            Intent(this, HrBleService::class.java).apply {
-                if (selectedTimeoutMinutes > 0) {
-                    putExtra(HrBleService.EXTRA_TIMEOUT_MINUTES, selectedTimeoutMinutes)
-                }
-            }
+            Intent(this, HrBleService::class.java)
         )
         started.value = true
-        timeoutMinutes.value = selectedTimeoutMinutes
-        remainingTimeSeconds.value = selectedTimeoutMinutes * 60
     }
 
     private fun isServiceRunning(): Boolean {
@@ -201,63 +159,10 @@ class MainActivity : ComponentActivity() {
 @Composable
 private fun WearScreen(
     started: Boolean,
-    defaultTimeout: Int,
-    timeoutMinutes: Int,
-    remainingTimeSeconds: Int,
-    onTimeoutChanged: (Int) -> Unit,
     onStart: () -> Unit,
-    onStop: () -> Unit,
-    onTimerUpdate: (Int) -> Unit
+    onStop: () -> Unit
 ) {
     val scrollState = rememberScrollState()
-    val coroutineScope = rememberCoroutineScope()
-
-    val labels = listOf("1 h", "4 h", "8 h", "24h", "Never")
-    val values = listOf(60, 4*60, 8*60, 24*60, -1)
-
-    val initialIndex = values.indexOf(defaultTimeout).let { if (it == -1) 1 else it }
-    val pickerState: PickerState = rememberPickerState(
-        initialNumberOfOptions = labels.size,
-        initiallySelectedOption = initialIndex
-    )
-
-    // Reflect selection to parent
-    LaunchedEffect(pickerState.selectedOption) {
-        onTimeoutChanged(values[pickerState.selectedOption])
-    }
-
-    // Countdown timer logic
-    LaunchedEffect(started, timeoutMinutes) {
-        if (started && timeoutMinutes > 0) {
-            var currentSeconds = remainingTimeSeconds
-            while (currentSeconds > 0) {
-                delay(1000) // Update every second
-                currentSeconds--
-                onTimerUpdate(currentSeconds)
-            }
-        }
-    }
-
-    // Handle timer reaching zero
-    LaunchedEffect(remainingTimeSeconds, started) {
-        if (started && timeoutMinutes > 0 && remainingTimeSeconds <= 0) {
-            // Timer reached zero, stop the service
-            onStop()
-        }
-    }
-
-    // Helper function to format time
-    fun formatTime(seconds: Int): String {
-        val hours = seconds / 3600
-        val minutes = (seconds % 3600) / 60
-        val secs = seconds % 60
-        
-        return when {
-            hours > 0 -> String.format("%d:%02d:%02d", hours, minutes, secs)
-            minutes > 0 -> String.format("%d:%02d", minutes, secs)
-            else -> String.format("%ds", secs)
-        }
-    }
 
     Scaffold(
         timeText = { TimeText() },
@@ -305,67 +210,14 @@ private fun WearScreen(
                 }
             }
 
-            // Timeout picker section (only show when not started)
-            if (!started) {
+            // Service status section (only show when started)
+            if (started) {
                 Box(
                     modifier = Modifier.fillMaxWidth(),
                     contentAlignment = Alignment.Center
                 ) {
                     Text(
-                        text = "Auto-stop Timeout",
-                        color = Color.LightGray,
-                        style = MaterialTheme.typography.titleMedium,
-                        modifier = Modifier.padding(top = 12.dp, bottom = 4.dp)
-                    )
-                }
-                
-                Picker(
-                    state = pickerState,
-                    readOnly = false,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(120.dp) // bigger area for easier scrolling
-                        .padding(horizontal = 8.dp)
-                ) { ix ->
-                    Text(
-                        text = labels[ix],
-                        style = MaterialTheme.typography.bodyMedium.copy(fontSize = 18.sp),
-                        color = if (ix == pickerState.selectedOption)
-                            Color.White else Color.Gray
-                    )
-                }
-
-                // Summary
-                Box(
-                    modifier = Modifier.fillMaxWidth(),
-                    contentAlignment = Alignment.Center
-                ) {
-                    val hint = if (values[pickerState.selectedOption] > 0)
-                        "Auto-stops after ${labels[pickerState.selectedOption]}"
-                    else
-                        "No auto-stop"
-                    Text(
-                        hint,
-                        color = Color.Gray,
-                        style = MaterialTheme.typography.labelMedium,
-                        modifier = Modifier.padding(vertical = 12.dp)
-                    )
-                }
-                
-                // Add extra spacing for better scrolling
-                Box(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(32.dp)
-                )
-            } else {
-                // Countdown timer section (only show when started)
-                Box(
-                    modifier = Modifier.fillMaxWidth(),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Text(
-                        text = "Auto-stop Timer",
+                        text = "Service Status",
                         color = Color.LightGray,
                         style = MaterialTheme.typography.titleMedium,
                         modifier = Modifier.padding(top = 12.dp, bottom = 4.dp)
@@ -376,41 +228,23 @@ private fun WearScreen(
                     modifier = Modifier.fillMaxWidth(),
                     contentAlignment = Alignment.Center
                 ) {
-                    if (timeoutMinutes > 0) {
-                        Text(
-                            text = formatTime(remainingTimeSeconds),
-                            color = Color.White,
-                            style = MaterialTheme.typography.headlineMedium.copy(fontSize = 32.sp),
-                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 16.dp)
-                        )
-                    } else {
-                        Text(
-                            text = "No auto-stop",
-                            color = Color.White,
-                            style = MaterialTheme.typography.headlineMedium.copy(fontSize = 24.sp),
-                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 16.dp)
-                        )
-                    }
+                    Text(
+                        text = "Running Indefinitely",
+                        color = Color.White,
+                        style = MaterialTheme.typography.headlineMedium.copy(fontSize = 16.sp),
+                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 16.dp)
+                    )
                 }
                 
                 Box(
                     modifier = Modifier.fillMaxWidth(),
                     contentAlignment = Alignment.Center
                 ) {
-                    val statusText = if (timeoutMinutes > 0) {
-                        if (remainingTimeSeconds > 0) {
-                            "Service will stop automatically"
-                        } else {
-                            "Service stopping now..."
-                        }
-                    } else {
-                        "Service running indefinitely"
-                    }
                     Text(
-                        statusText,
+                        "Service will run until manually stopped. Hourly reminders will be sent.",
                         color = Color.Gray,
                         style = MaterialTheme.typography.labelMedium,
-                        modifier = Modifier.padding(vertical = 12.dp)
+                        modifier = Modifier.padding(vertical = 12.dp, horizontal = 16.dp)
                     )
                 }
                 

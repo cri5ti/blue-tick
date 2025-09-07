@@ -20,6 +20,7 @@ If you're a cyclist using [Cadence](https://getcadence.app) for training, you kn
 - **Cadence Integration**: Compatible with Cadence's BLE heart rate monitor support
 - **Wear OS Optimized**: Built specifically for Wear OS with proper ongoing activity indicators
 - **Background Service**: Continues broadcasting even when the app is in the background
-- **Auto-timeout**: Configurable timeout to automatically stop broadcasting
+- **Hourly Reminders**: Gentle notifications every hour to remind you the service is active
 - **Persistent Status**: Shows current heart rate and service status on your watch face
+
 

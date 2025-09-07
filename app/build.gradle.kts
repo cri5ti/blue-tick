@@ -58,8 +58,6 @@ dependencies {
     implementation("androidx.compose.ui:ui-tooling-preview")
     implementation("androidx.compose.material3:material3")
 
-    // Integration with Activity
-    implementation("androidx.activity:activity-compose:1.9.2")
 
     // Optional debug tooling
     debugImplementation("androidx.compose.ui:ui-tooling")

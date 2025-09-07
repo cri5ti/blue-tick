@@ -22,7 +22,6 @@ import android.util.Log
 import android.widget.Toast
 import androidx.annotation.RequiresPermission
 import androidx.core.app.NotificationCompat
-import androidx.core.content.ContextCompat
 import androidx.health.services.client.HealthServices
 import androidx.wear.ongoing.OngoingActivity
 import androidx.wear.ongoing.Status
@@ -50,7 +49,6 @@ class HrBleService : Service() {
         const val TAG = "HrBle"
         const val CHANNEL_ID = "hr_ble"
         const val ACTION_STOP = "com.cri5ti.bluetick.ACTION_STOP"
-        const val EXTRA_TIMEOUT_MINUTES = "extra_timeout_minutes"
 
         val HRS_UUID: UUID = UUID.fromString("0000180D-0000-1000-8000-00805F9B34FB") // Heart Rate Service
         val HRM_UUID: UUID = UUID.fromString("00002A37-0000-1000-8000-00805F9B34FB") // Heart Rate Measurement
@@ -85,6 +83,9 @@ class HrBleService : Service() {
 
     // ---------- Ongoing Activity ----------
     private var ongoingActivity: OngoingActivity? = null
+
+    // ---------- Hourly Reminder ----------
+    private var reminderJob: kotlinx.coroutines.Job? = null
 
     private val heartRateCallback = object : MeasureCallback {
         override fun onAvailabilityChanged(dataType: DeltaDataType<*, *>, availability: Availability) {
@@ -130,18 +131,10 @@ class HrBleService : Service() {
         // Start (or retry) advertising
         startAdvertisingWithRetry()
         
+        // Start hourly reminder notifications
+        startHourlyReminders()
+        
         Log.d(TAG, "Service started with flags: $flags, startId: $startId")
-
-        val timeoutMin = intent?.getIntExtra(EXTRA_TIMEOUT_MINUTES, -1) ?: -1
-        if (timeoutMin > 0) {
-            // cancel any previous timer (if you add one), then schedule a new one
-            serviceScope.launch {
-                Log.d(TAG, "Auto-stop scheduled in $timeoutMin minutes")
-                delay(timeoutMin * 60_000L)
-                Log.d(TAG, "Auto-stop firing")
-                stopSelf()
-            }
-        }
 
         // Health Services: start later when first client subscribes (via CCCD)
         return START_STICKY
@@ -152,6 +145,7 @@ class HrBleService : Service() {
         Log.d(TAG, "onDestroy")
 
         stopHeartRateStream()
+        stopHourlyReminders()
 
         val hasAdvertise = checkSelfPermission(Manifest.permission.BLUETOOTH_ADVERTISE) == PackageManager.PERMISSION_GRANTED
 
@@ -516,6 +510,67 @@ class HrBleService : Service() {
                 }
             }
         }
+    }
+
+    // ---------- Hourly Reminder Notifications ----------
+    private fun startHourlyReminders() {
+        stopHourlyReminders() // Cancel any existing reminders
+        
+        reminderJob = serviceScope.launch {
+            while (true) {
+                delay(60 * 60 * 1000L) // Wait 1 hour
+                sendHourlyReminderNotification()
+            }
+        }
+        Log.d(TAG, "Hourly reminder notifications started")
+    }
+
+    private fun stopHourlyReminders() {
+        reminderJob?.cancel()
+        reminderJob = null
+        Log.d(TAG, "Hourly reminder notifications stopped")
+    }
+
+    private fun sendHourlyReminderNotification() {
+        val nm = getSystemService(NotificationManager::class.java)
+        
+        // Create a separate notification channel for reminders
+        val reminderChannel = NotificationChannel(
+            "hr_reminder", 
+            "HR Service Reminders", 
+            NotificationManager.IMPORTANCE_HIGH
+        ).apply {
+            description = "Hourly reminders that heart rate service is running"
+            setShowBadge(true)
+            enableLights(true)
+            enableVibration(true)
+            vibrationPattern = longArrayOf(0, 500, 200, 500) // Short vibration pattern
+            setSound(android.provider.Settings.System.DEFAULT_NOTIFICATION_URI, null)
+        }
+        nm.createNotificationChannel(reminderChannel)
+
+        // Create touch intent to open MainActivity
+        val touchIntent = Intent(this, MainActivity::class.java).apply {
+            flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
+        }
+        val touchPi = PendingIntent.getActivity(
+            this, 1, touchIntent, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
+
+        val notification = NotificationCompat.Builder(this, "hr_reminder")
+            .setContentTitle("Heart Rate Service")
+            .setContentText("Service is still running and broadcasting heart rate data")
+            .setSmallIcon(R.drawable.ic_notification_heart)
+            .setPriority(NotificationCompat.PRIORITY_HIGH)
+            .setCategory(NotificationCompat.CATEGORY_STATUS)
+            .setShowWhen(true)
+            .setContentIntent(touchPi)
+            .setAutoCancel(true)
+            .setDefaults(NotificationCompat.DEFAULT_ALL) // This ensures sound, vibration, and lights
+            .build()
+
+        nm.notify(102, notification)
+        Log.d(TAG, "Hourly reminder notification sent")
     }
 
     // ---------- Guards ----------
